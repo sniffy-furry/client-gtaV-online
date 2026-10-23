@@ -73,7 +73,7 @@ class Client {
     // net -> game
     std::vector<PState> players; bool playersNew = false;
     std::map<int, App> apps; std::map<int, Loadout> loads; std::vector<AnimEv> anims;
-    std::vector<ERow> ents; std::vector<int> edel; std::vector<std::pair<int, int>> owns; std::vector<int> left;
+    std::vector<ERow> ents; std::vector<int> edel; std::vector<std::pair<int, int>> owns; std::vector<int> left, take;
     bool worldNew = false; int wsec = 0; float wscale = 30; bool wfrozen = false; std::string wweather = "CLEAR"; double wrecv = 0;
     std::vector<std::string> localAnim; // "dict|clip|flags" or "stop"
     // game -> net
@@ -85,12 +85,12 @@ class Client {
   struct Remote {
     PState st; double lastSeen = 0, spawnAt = 0, lastTask = 0, lastCoordSet = 0; bool seen = false;
     std::string animDict, animClip; int animFlags = 0; bool animPending = false, animStop = false; double animSince = 0;
-    App app; Loadout load; int ped = 0, veh = 0; uint32_t pedModel = 0, vehModel = 0, curWeapon = 0xFFFFFFFFu; int lastFl = 0; bool moving = false, dead = false, crouch = false, appliedApp = false;
+    App app; Loadout load; double vehOutSince = 0; int ped = 0, veh = 0; uint32_t pedModel = 0, vehModel = 0, curWeapon = 0xFFFFFFFFu; int lastFl = 0; bool moving = false, dead = false, crouch = false, appliedApp = false;
   };
   struct EPup { ERow row; double lastSeen = 0, spawnAt = 0, lastTask = 0; int handle = 0; bool moving = false, seated = false; };
   std::map<int, Remote> remotes_; std::map<int, EPup> eps_;
   std::map<int, int> lidOf_; std::map<int, double> lidSeen_; int nextLid_ = 1;    // host streaming: entity handle -> local id
-  std::set<int> ownedByUs_;                                                       // handles of our own puppets (never stream them)
+  std::set<int> ownedByUs_; std::map<int, double> xferred_; std::vector<int> killLids_; double lastStreamLog_ = 0;                                                       // handles of our own puppets (never stream them)
   struct World { bool valid = false; double sec = 0, recv = 0; float scale = 30; bool frozen = false; std::string weather; } world_;
   double lastClock_ = 0; int lastLocalPed_ = 0; std::string pDict_, pClip_; int pFlags_ = 0; double pSince_ = 0;
   int lastPed_ = 0; bool selfTested_ = false, clockPaused_ = false, popSuppressed_ = false;

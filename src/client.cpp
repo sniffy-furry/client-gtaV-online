@@ -155,6 +155,7 @@ void Client::handle(const std::string& line) {
     }
     std::lock_guard<std::mutex> l(sh_.mu); if (sh_.ents.size() < 2000) sh_.ents.insert(sh_.ents.end(), rows.begin(), rows.end());
   } else if (t == "ed") { std::lock_guard<std::mutex> l(sh_.mu); for (const JV& g : m.at("l").a) sh_.edel.push_back(g.i()); }
+  else if (t == "take") { std::lock_guard<std::mutex> l(sh_.mu); sh_.take.push_back(m.at("g").i()); }
   else if (t == "own") { std::lock_guard<std::mutex> l(sh_.mu); sh_.owns.push_back({m.at("g").i(), m.at("c").i()}); }
 }
 

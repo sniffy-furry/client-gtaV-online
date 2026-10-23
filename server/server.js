@@ -68,6 +68,7 @@ function setWorld(patch, who) {
 const socks = new Map();           // local address -> udp socket
 const players = new Map();         // "ip:port" -> player
 const byId = new Map();            // id -> player
+const xferred = new Map();         // gid -> expiry: entities a player took over; late rows from the old controller are ignored
 const ents = new Map();            // gid -> { g,k,m,x,y,z,h,vx,vy,vz,fl,a,b, ctl, last, raw }
 let nextId = 1, hostId = 0;
 
@@ -169,6 +170,7 @@ function onMessage(buf, rinfo0, sock) {
         if (!(int(g, 1, 0x7FFFFFFF) && int(k, 1, 2) && int(m, 0, 0xFFFFFFFF) && num(x, -20000, 20000) && num(y, -20000, 20000) && num(z, -2000, 5000) && num(h, -720, 720)
           && num(vx, -300, 300) && num(vy, -300, 300) && num(vz, -300, 300) && int(fl, 0, 0xFFFFFFF) && int(a, -2147483648, 2147483647) && int(b, -2147483648, 2147483647))) continue;
         let e = ents.get(g);
+        if (!e && xferred.has(g) && xferred.get(g) > now) continue;
         if (!e) { if ((g >>> 16) !== p.id || mine >= cfg.entities.maxPerPlayer) continue; e = { g, ctl: p.id }; ents.set(g, e); mine++; }
         else if (e.ctl !== p.id) continue;
         Object.assign(e, { k, m, x, y, z, h, vx, vy, vz, fl, a, b, last: now });
@@ -183,7 +185,11 @@ function onMessage(buf, rinfo0, sock) {
     case 'xfer': { // take control of an entity (e.g. the player entered an NPC's car): the old controller becomes a puppet
       if (p.v < 2 || !int(msg.g, 1, 0x7FFFFFFF)) return;
       const e = ents.get(msg.g); if (!e || e.ctl === p.id) return;
-      e.ctl = p.id; e.last = now; broadcastV2({ t: 'own', g: e.g, c: p.id }); break;
+      // the player now drives it, so it is represented by the player's own state (puppet car): remove the NPC copy everywhere
+      ents.delete(e.g); xferred.set(e.g, now + 15000);
+      const old = byId.get(e.ctl);
+      if (old) send(old.rinfo, { t: 'take', g: e.g });
+      broadcastV2({ t: 'ed', l: [e.g] }, p.id); log(`${p.name} #${p.id} took over entity ${e.g} from #${e.ctl}`); break;
     }
     case 'chat': {
       const text = String(msg.m || '').replace(/[^\x20-\x7E]/g, '').slice(0, 120);
