@@ -11,6 +11,8 @@ using namespace mp;
 static int pass = 0, fail = 0;
 #define CHECK(c, msg) do { bool ok_ = (c); ok_ ? pass++ : fail++; printf("%s %s\n", ok_ ? "PASS" : "FAIL", msg); fflush(stdout); } while (0)
 static void sleep_s(double s) { std::this_thread::sleep_for(std::chrono::milliseconds((int)(s * 1000))); }
+#include <functional>
+static bool waitUntil(const std::function<bool()>& c, double secs) { for (int i = 0; i < (int)(secs * 10); i++) { if (c()) return true; std::this_thread::sleep_for(std::chrono::milliseconds(100)); } return c(); }
 static void writeFile(const std::string& p, const std::string& s) { FILE* f = fopen(p.c_str(), "w"); fputs(s.c_str(), f); fclose(f); }
 struct Driver { MockGame& g; Client& c; std::atomic<bool> run{true}; std::thread t; Driver(MockGame& g_, Client& c_) : g(g_), c(c_) { t = std::thread([this] { while (run) { g.step(0.016f); c.tick(g); sleep_s(0.016); } }); } ~Driver() { run = false; if (t.joinable()) t.join(); } };
 
@@ -65,22 +67,22 @@ int main() {
 
   // ---- phase 2: host commands + animation
   writeFile("/tmp/mpA/mp_say.txt", "/time 5 30\n/weather RAIN\n/anim amb@world_human_hang_out_street@male_a@idle_a idle_a 1\n");
-  sleep_s(3.0);
+  waitUntil([&] { return B.clockH == 5 && B.weather == "RAIN" && B.animCalls >= 1 && A.animCalls >= 1; }, 15.0); sleep_s(0.5);
   CHECK(B.clockH == 5 && B.clockM >= 30 && B.clockM <= 33, "host /time 5 30 reached Bob (05:3x)");
   CHECK(B.weather == "RAIN", "host /weather RAIN reached Bob");
   CHECK(B.animCalls >= 1 && B.lastAnimDict == "amb@world_human_hang_out_street@male_a@idle_a" && B.lastAnimClip == "idle_a", "animation relayed and played on Alice's puppet");
   CHECK(A.animCalls >= 1, "Alice played the animation locally too");
-  writeFile("/tmp/mpB/mp_say.txt", "/time 12 0\n"); sleep_s(1.0);
+  writeFile("/tmp/mpB/mp_say.txt", "/time 12 0\n"); sleep_s(2.0);
   CHECK(A.clockH == 5, "non-host /time ignored");
 
   // ---- phase 3: aiming + shooting, crouch
-  A.player().vel = {0, 0, 0}; A.flags = 1 | 2 | 8; int s0 = B.shootCalls; sleep_s(1.5);
+  A.player().vel = {0, 0, 0}; A.flags = 1 | 2 | 8; int s0 = B.shootCalls; waitUntil([&] { return B.shootCalls > s0; }, 8.0);
   CHECK(B.shootCalls > s0, "puppet shoots when Alice shoots");
 
   // ---- phase 3b: chat on screen + shared wanted level
-  { int f0 = B.feedPosts; writeFile("/tmp/mpA/mp_say.txt", "hello from alice\n"); sleep_s(1.5); CHECK(B.feedPosts > f0, "chat message shown on Bob's screen (feed ticker)"); }
-  A.wanted = 3; sleep_s(2.5); CHECK(B.wanted == 3, "wanted level of Alice reached Bob");
-  B.wanted = 0; sleep_s(2.5); CHECK(A.wanted == 0, "Bob clearing it clears it for Alice");
+  { int f0 = B.feedPosts; writeFile("/tmp/mpA/mp_say.txt", "hello from alice\n"); waitUntil([&] { return B.feedPosts > f0; }, 8.0); CHECK(B.feedPosts > f0, "chat message shown on Bob's screen (feed ticker)"); }
+  A.wanted = 3; waitUntil([&] { return B.wanted == 3; }, 8.0); CHECK(B.wanted == 3, "wanted level of Alice reached Bob");
+  B.wanted = 0; waitUntil([&] { return A.wanted == 0; }, 8.0); CHECK(A.wanted == 0, "Bob clearing it clears it for Alice");
 
   // ---- phase 4: Alice drives
   A.flags = 0; { MEnt& c = A.ents[alicesCar]; std::lock_guard<std::mutex> l(A.mu); c.pos = A.player().pos; c.pos.x += 0.5f; A.player().veh = alicesCar; A.player().seat = -1; c.vel = {10, 0, 0}; A.player().vel = {10, 0, 0}; }
