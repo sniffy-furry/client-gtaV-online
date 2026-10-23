@@ -11,7 +11,7 @@ const DEFAULTS = {
   hosts: 'auto', port: 30120, httpPort: 30121, tickHz: 10, maxPlayers: 16, timeoutMs: 10000, requireMods: true, motd: 'GTAV MP', modsDir: 'mods',
   world: { hour: 22, minute: 0, timeScale: 30, frozen: false, weather: 'CLEAR' },   // timeScale: game seconds per real second (30 = GTA default, 2 s per game minute)
   entities: { interestRadius: 300, maxPerPlayer: 150, maxSend: 80, expireMs: 2500, rateHz: 6 },
-  population: 'host',   // 'host': only the host's game generates NPC traffic, everyone else mirrors it
+  population: 'proximity',   // 'proximity': every player runs the NPC traffic around himself and streams it (a lower-id player nearby owns the area); 'host': only the host runs it
 };
 const user = fs.existsSync(cfgPath) ? JSON.parse(fs.readFileSync(cfgPath, 'utf8')) : {};
 const cfg = Object.assign({}, DEFAULTS, user, { world: Object.assign({}, DEFAULTS.world, user.world), entities: Object.assign({}, DEFAULTS.entities, user.entities) });
@@ -70,7 +70,7 @@ const players = new Map();         // "ip:port" -> player
 const byId = new Map();            // id -> player
 const xferred = new Map();         // gid -> expiry: entities a player took over; late rows from the old controller are ignored
 const ents = new Map();            // gid -> { g,k,m,x,y,z,h,vx,vy,vz,fl,a,b, ctl, last, raw }
-let nextId = 1, hostId = 0;
+let nextId = 1, hostId = 0, wanted = 0;
 
 function send(rinfo, obj) {
   const b = Buffer.from(JSON.stringify(obj));
@@ -112,7 +112,7 @@ function onMessage(buf, rinfo0, sock) {
     send(rinfo, okMsg(p));
     broadcast({ t: 'chat', n: '*', m: `${name} joined` }, p.id);
     if (p.v >= 2) {
-      send(rinfo, worldMsg());
+      send(rinfo, worldMsg()); if (wanted) send(rinfo, { t: 'wl', l: wanted, i: 0 });
       for (const o of players.values()) { // late join snapshot: everybody's look and loadout
         if (o.id === p.id || o.v < 2) continue;
         if (o.app) send(rinfo, Object.assign({ t: 'a', i: o.id }, o.app));
@@ -136,8 +136,11 @@ function onMessage(buf, rinfo0, sock) {
         wp: Number.isInteger(msg.wp) && msg.wp >= 0 && msg.wp <= 0xFFFFFFFF ? msg.wp : 0, iv: msg.iv ? 1 : 0,
         vm: typeof msg.vm === 'string' && /^[A-Za-z0-9_]{0,32}$/.test(msg.vm) ? msg.vm : '',
         // v2 extras: fl = bit flags (1 aim, 2 shoot, 4 reload, 8 crouch, 16 ragdoll, 32 sprint, 64 in vehicle, 128 parachute, 256 swim, 512 climb, 1024 cover, 2048 dead), sd = seat, am = ammo in clip
+        vd: Array.isArray(msg.vd) && msg.vd.length === 8 && msg.vd.every(v => typeof v === 'number' && Number.isFinite(v)) ? msg.vd : null,
+        cp: num(msg.cp, -90, 90) ? msg.cp : 0, cy: num(msg.cy, -720, 720) ? msg.cy : 0,
         fl: int(msg.fl, 0, 0xFFFFF) ? msg.fl : 0, sd: int(msg.sd, -2, 16) ? msg.sd : -2, am: int(msg.am, 0, 99999) ? msg.am : 0,
       };
+      { const dead = (p.st.fl & 2048) !== 0; if (dead && !p.dead) { log(`${p.name} died`); broadcast({ t: 'chat', n: '*', m: `${p.name} died` }); } p.dead = dead; }
       break;
     }
     case 'a': { // appearance: model (hash or name), c = 12 x [drawable,texture,palette], p = 8 x [index,texture], hb = head blend, ht = hair tints
@@ -165,15 +168,16 @@ function onMessage(buf, rinfo0, sock) {
       if (p.v < 2 || !Array.isArray(msg.e) || msg.e.length > 60) return;
       let mine = 0; for (const e of ents.values()) if (e.ctl === p.id) mine++;
       for (const r of msg.e) {
-        if (!Array.isArray(r) || r.length < 10 || r.length > 13) continue;
-        const [g, k, m, x, y, z, h, vx, vy, vz, fl = 0, a = 0, b = 0] = r;
+        if (!Array.isArray(r) || r.length < 10 || r.length > 14) continue;
+        const [g, k, m, x, y, z, h, vx, vy, vz, fl = 0, a = 0, b = 0, d] = r;
+        const dok = Array.isArray(d) && d.length <= 40 && d.every(v => typeof v === 'number' && Number.isFinite(v));
         if (!(int(g, 1, 0x7FFFFFFF) && int(k, 1, 2) && int(m, 0, 0xFFFFFFFF) && num(x, -20000, 20000) && num(y, -20000, 20000) && num(z, -2000, 5000) && num(h, -720, 720)
           && num(vx, -300, 300) && num(vy, -300, 300) && num(vz, -300, 300) && int(fl, 0, 0xFFFFFFF) && int(a, -2147483648, 2147483647) && int(b, -2147483648, 2147483647))) continue;
         let e = ents.get(g);
         if (!e && xferred.has(g) && xferred.get(g) > now) continue;
         if (!e) { if ((g >>> 16) !== p.id || mine >= cfg.entities.maxPerPlayer) continue; e = { g, ctl: p.id }; ents.set(g, e); mine++; }
         else if (e.ctl !== p.id) continue;
-        Object.assign(e, { k, m, x, y, z, h, vx, vy, vz, fl, a, b, last: now });
+        Object.assign(e, { k, m, x, y, z, h, vx, vy, vz, fl, a, b, last: now }); if (dok) { e.d = d; e.dRx = now; }
       }
       break;
     }
@@ -190,6 +194,10 @@ function onMessage(buf, rinfo0, sock) {
       const old = byId.get(e.ctl);
       if (old) send(old.rinfo, { t: 'take', g: e.g });
       broadcastV2({ t: 'ed', l: [e.g] }, p.id); log(`${p.name} #${p.id} took over entity ${e.g} from #${e.ctl}`); break;
+    }
+    case 'wl': { // shared wanted level: last change wins, relayed to everyone else
+      if (p.v < 2 || !int(msg.l, 0, 5)) return;
+      wanted = msg.l; log(`wanted level ${wanted} (by ${p.name})`); broadcastV2({ t: 'wl', l: wanted, i: p.id }, p.id); break;
     }
     case 'chat': {
       const text = String(msg.m || '').replace(/[^\x20-\x7E]/g, '').slice(0, 120);
@@ -240,15 +248,23 @@ function runCommand(line, who) {
 if (process.stdin.isTTY) require('readline').createInterface({ input: process.stdin }).on('line', l => { if (l.trim()) runCommand(l); });
 
 // ---------- tick loops ----------
+// who runs the ambient population: 'proximity' = every player runs it around himself, except when a lower-id player is close (that one owns the area); 'host' = only the host
+function popFor(p, all) {
+  if (cfg.population === 'host') return p.id === hostId ? 1 : 0;
+  const lim = p.pop === 0 ? 450 : 350;
+  for (const o of all) if (o.v >= 2 && o.id < p.id && Math.hypot(o.st.x - p.st.x, o.st.y - p.st.y) < lim) return 0;
+  return 1;
+}
 setInterval(() => { // players + keepalive timeouts (v1 format, v2 receivers also get extras)
   const now = Date.now();
   for (const [key, p] of players) if (now - p.last > cfg.timeoutMs) drop(key, 'timed out');
   const all = [...players.values()].filter(p => p.st);
   for (const p of players.values()) {
+    if (p.v >= 2 && p.st) { const m = popFor(p, all); if (m !== p.pop) { p.pop = m; log(`population: #${p.id} ${p.name} ${m ? 'owns' : 'mirrors'} its area`); send(p.rinfo, { t: 'pop', m }); } }
     const others = all.filter(o => o.id !== p.id).map(o => {
       const r = { i: o.id, n: o.name, x: +o.st.x.toFixed(2), y: +o.st.y.toFixed(2), z: +o.st.z.toFixed(2), h: +o.st.h.toFixed(1), hp: o.st.hp,
         vx: +o.st.vx.toFixed(2), vy: +o.st.vy.toFixed(2), vz: +o.st.vz.toFixed(2), wp: o.st.wp, iv: o.st.iv, vm: o.st.vm };
-      if (p.v >= 2) { r.fl = o.st.fl; r.sd = o.st.sd; r.am = o.st.am; }
+      if (p.v >= 2) { r.fl = o.st.fl; r.sd = o.st.sd; r.am = o.st.am; r.cp = +o.st.cp.toFixed(1); r.cy = +o.st.cy.toFixed(1); if (o.st.vd) r.vd = o.st.vd.map(v => +v.toFixed(4)); }
       return r;
     });
     send(p.rinfo, { t: 'w', p: others });
@@ -259,7 +275,7 @@ setInterval(() => { // world clock
   const now = Date.now(), dt = (now - lastWorldTick) / 1000; lastWorldTick = now;
   if (!world.frozen) world.sec = (world.sec + dt * world.scale) % 86400;
 }, 250);
-setInterval(() => { if (players.size) broadcastV2(worldMsg()); }, 2000);
+setInterval(() => { if (players.size) { broadcastV2(worldMsg()); for (const p of players.values()) if (p.v >= 2 && p.pop !== undefined) send(p.rinfo, { t: 'pop', m: p.pop }); } }, 2000);
 
 setInterval(() => { // entity relay with interest management + expiry
   const now = Date.now(), R2 = cfg.entities.interestRadius ** 2, expired = [];
@@ -278,6 +294,7 @@ setInterval(() => { // entity relay with interest management + expiry
     const flush = () => { if (chunk.length) send(p.rinfo, { t: 'e', e: chunk }); chunk = []; size = 20; };
     for (const [, e] of near.slice(0, cfg.entities.maxSend)) {
       const r = [e.g, e.k, e.m, +e.x.toFixed(2), +e.y.toFixed(2), +e.z.toFixed(2), +e.h.toFixed(1), +e.vx.toFixed(1), +e.vy.toFixed(1), +e.vz.toFixed(1), e.fl, e.a, e.b, e.ctl];
+      if (e.d && (e.k === 2 || now - e.dRx < 700)) r.push(e.d);   // vehicle detail every time; clothes only right after the owner sent them
       const len = JSON.stringify(r).length + 1;
       if (size + len > 1200) flush();
       chunk.push(r); size += len;

@@ -33,3 +33,21 @@ Controller (owner) streams: `{"t":"e","e":[[gid,kind,model,x,y,z,h,vx,vy,vz,fl,a
 - Population policy `host`: only the host keeps normal ambient traffic; every other client sets ped/vehicle density multipliers to 0 each frame and mirrors the host's entities.
 
 Suggested `fl/a/b` meaning: ped `fl` = state bits as above, `a` = health, `b` = weapon hash; vehicle `fl` bits 1 engine on, 2 lights, 4 siren, 8 horn, `a` = colours (primary | secondary << 8), `b` = driver gid or 0.
+
+## v4 additions
+- state `s` gains `cp` (camera pitch) and `cy` (camera yaw), relayed in `w` rows: puppets aim where the player really aims.
+- `{"t":"wl","l":0..5}` C->S shared wanted level (last change wins). S->C `{"t":"wl","l":N,"i":id}`; late joiners get the current level.
+- `chat` is shown on the client as a feed ticker notification.
+- NPC cars/peds that coincide with a player's car puppet are dropped on the receiver (no duplicates); the host removes its own car from the NPC stream the moment it sits in it.
+
+## v5: full state
+- entity row (owner -> server) gets an optional 14th element `d`; relayed rows are `[...,fl,a,b,ctl,d]`.
+  - vehicle `d` = `[qx,qy,qz,qw, steer(reserved), bits, bodyHealth, engineHealth]`; bits: 1 engine, 2 lights, 4 high beam, 8 siren, 16 horn, doors open `<<8` (8 bits), tyres burst `<<16` (6 bits).
+  - ped `d` = 12 x `[drawable, texture]` (clothes), sent once every 3 s.
+  - ped `fl` adds 16 ragdoll, 2 shoot, 2048 dead (dead bodies are streamed too); on foot `b` = weapon hash (signed int32).
+- state `s` gets `vd` (same layout as vehicle `d`) while in a car, relayed in `w` rows: the player's car puppet gets the same rotation, lights, doors, siren, damage.
+
+## v6: events
+- puppets (cars, peds) are proof against local bullets/fire/explosions/collisions; only the owner's state counts. Shots by a puppet are real bullets (aim ray 60 m from `cp`/`cy`), so the victim's own game applies the damage and reports it in `hp`/`fl`.
+- vehicle `d[4]` = 1 exploded, 2 burning: receivers explode / ignite their copy.
+- the server announces `<name> died` in chat when a player's dead flag (2048) rises.

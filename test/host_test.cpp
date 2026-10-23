@@ -26,6 +26,7 @@ int main() {
   amb(1, HIP, {110, 200, 30}); amb(1, BIZ, {95, 205, 30}); amb(1, BEACH, {900, 900, 30}); int ambVeh = amb(2, SULTAN, {105, 210, 30}); A.ents[ambVeh].col[0] = 12; A.ents[ambVeh].col[1] = 34;
   int alicesCar = amb(2, SULTAN, {101, 200, 30}); A.ents[alicesCar].ambient = false; A.ents[alicesCar].pos = {5000, 5000, 30}; // parked far away until Alice gets in
   { MEnt& p = B.player(); p.model = joaat("player_zero"); p.pos = {110, 210, 30}; }
+  int bAmb = 0; { MEnt e; e.type = 1; e.model = HIP; e.pos = {112, 212, 30}; e.ambient = true; bAmb = B.nextHandle++; B.ents[bAmb] = e; }   // Bob's own ambient ped: must be purged once Alice owns the area
   Env eA, eB; eA.dir = "/tmp/mpA"; eB.dir = "/tmp/mpB";
   Client cA(eA), cB(eB);
   std::thread nA([&] { cA.run(); });
@@ -53,6 +54,7 @@ int main() {
   CHECK(B.clockPaused && B.clockH == 22 && B.clockSets > 20, "Bob's clock follows the server: night (22:xx), paused locally");
   CHECK(B.weather == "CLEAR", "Bob's weather follows the server");
   CHECK(A.clockPaused && A.clockH == 22, "Alice also on server time");
+  CHECK(!B.ents[bAmb].exists, "Bob's own ambient ped purged (area owned by Alice, no duplicates)");
   CHECK(B.pedBudget == 0 && B.vehBudget == 0 && B.densityCalls > 50, "Bob's local traffic suppressed (mirrors the host)");
   CHECK(A.pedBudget == -1 && A.densityCalls == 0, "Alice (host) keeps normal traffic");
   { auto peds = B.puppetsOf(1), vehs = B.puppetsOf(2); bool hip = false, biz = false, beach = false; for (int h : peds) { uint32_t m = B.ents[h].model; hip |= m == HIP; biz |= m == BIZ; beach |= m == BEACH; }
@@ -74,6 +76,11 @@ int main() {
   // ---- phase 3: aiming + shooting, crouch
   A.player().vel = {0, 0, 0}; A.flags = 1 | 2 | 8; int s0 = B.shootCalls; sleep_s(1.5);
   CHECK(B.shootCalls > s0, "puppet shoots when Alice shoots");
+
+  // ---- phase 3b: chat on screen + shared wanted level
+  { int f0 = B.feedPosts; writeFile("/tmp/mpA/mp_say.txt", "hello from alice\n"); sleep_s(1.5); CHECK(B.feedPosts > f0, "chat message shown on Bob's screen (feed ticker)"); }
+  A.wanted = 3; sleep_s(2.5); CHECK(B.wanted == 3, "wanted level of Alice reached Bob");
+  B.wanted = 0; sleep_s(2.5); CHECK(A.wanted == 0, "Bob clearing it clears it for Alice");
 
   // ---- phase 4: Alice drives
   A.flags = 0; { MEnt& c = A.ents[alicesCar]; std::lock_guard<std::mutex> l(A.mu); c.pos = A.player().pos; c.pos.x += 0.5f; A.player().veh = alicesCar; A.player().seat = -1; c.vel = {10, 0, 0}; A.player().vel = {10, 0, 0}; }

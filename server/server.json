@@ -8,5 +8,5 @@
   "motd": "GTAV MP",
   "world": { "hour": 22, "minute": 0, "timeScale": 30, "frozen": false, "weather": "CLEAR" },
   "entities": { "interestRadius": 300, "maxPerPlayer": 150, "maxSend": 80, "expireMs": 2500, "rateHz": 6 },
-  "population": "host"
+  "population": "proximity"
 }

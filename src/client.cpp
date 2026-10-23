@@ -123,18 +123,20 @@ void Client::handle(const std::string& line) {
   JV m; if (!JParser::parse(line.data(), line.size(), m) || m.t != JV::Obj) return;
   std::string t = m.at("t").str(); double now = now_ms();
   if (t == "ok") {
-    bool first = !joined_; myId_ = m.at("id").i(); joined_ = true; lastRx_ = now;
+    bool first = !joined_; myId_ = m.at("id").i(); joined_ = true; lastRx_ = now; if (first) popOwn_ = true;
     serverTickHz_ = std::max(1, std::min(60, m.at("tick").i(10)));
     v2_ = m.at("v").i(1) >= 2; if (v2_) { hostId_ = m.at("host").i(0); pop_ = m.at("pop").str("host"); entRate_ = std::max(1, std::min(20, m.at("er").i(6))); interest_ = m.at("ir").i(300); }
     if (first) logf("joined as #%d%s", myId_.load(), v2_ ? " (protocol v2)" : "");
   } else if (t == "deny") { logf("join denied: %s", m.at("r").str().c_str()); }
-  else if (t == "chat") { logf("[chat] <%s> %s", m.at("n").str().c_str(), m.at("m").str().c_str()); }
+  else if (t == "chat") { logf("[chat] <%s> %s", m.at("n").str().c_str(), m.at("m").str().c_str()); std::lock_guard<std::mutex> l(sh_.mu); if (sh_.chatIn.size() < 20) sh_.chatIn.push_back(m.at("n").str() + ": " + m.at("m").str()); }
+  else if (t == "pop") { bool o = m.at("m").i(1) != 0; if (o != popOwn_) logf("population: %s", o ? "I own the area around me (local traffic on, streamed to others)" : "another player owns this area (local traffic off, mirroring)"); popOwn_ = o; }
+  else if (t == "wl") { std::lock_guard<std::mutex> l(sh_.mu); sh_.wlIn.push_back(m.at("l").i()); }
   else if (t == "w") {
     std::vector<PState> v;
     for (const JV& p : m.at("p").a) {
       PState s; s.id = p.at("i").i(); s.name = p.at("n").str(); s.x = (float)p.at("x").num(); s.y = (float)p.at("y").num(); s.z = (float)p.at("z").num(); s.h = (float)p.at("h").num();
       s.vx = (float)p.at("vx").num(); s.vy = (float)p.at("vy").num(); s.vz = (float)p.at("vz").num(); s.hp = p.at("hp").i(200); s.wp = p.at("wp").u(); s.iv = p.at("iv").i(); s.vm = p.at("vm").str();
-      s.fl = p.at("fl").i(0); s.sd = p.at("sd").i(-2); s.am = p.at("am").i(0); v.push_back(s);
+      s.fl = p.at("fl").i(0); s.sd = p.at("sd").i(-2); s.am = p.at("am").i(0); s.cp = (float)p.at("cp").num(); s.cy = (float)p.at("cy").num(); for (const JV& x : p.at("vd").a) s.vd.push_back((float)x.num()); v.push_back(s);
     }
     std::lock_guard<std::mutex> l(sh_.mu); sh_.players = std::move(v); sh_.playersNew = true;
   } else if (t == "left") { int id = m.at("i").i(); logf("player #%d left", id); std::lock_guard<std::mutex> l(sh_.mu); sh_.left.push_back(id); }
@@ -151,7 +153,7 @@ void Client::handle(const std::string& line) {
     std::vector<ERow> rows;
     for (const JV& r : m.at("e").a) {
       if (!r.isArr() || r.a.size() < 14) continue; ERow e; e.g = r.a[0].i(); e.k = r.a[1].i(); e.m = r.a[2].u(); e.x = (float)r.a[3].num(); e.y = (float)r.a[4].num(); e.z = (float)r.a[5].num(); e.h = (float)r.a[6].num();
-      e.vx = (float)r.a[7].num(); e.vy = (float)r.a[8].num(); e.vz = (float)r.a[9].num(); e.fl = r.a[10].i(); e.a = r.a[11].i(); e.b = r.a[12].i(); e.ctl = r.a[13].i(); rows.push_back(e);
+      e.vx = (float)r.a[7].num(); e.vy = (float)r.a[8].num(); e.vz = (float)r.a[9].num(); e.fl = r.a[10].i(); e.a = r.a[11].i(); e.b = r.a[12].i(); e.ctl = r.a[13].i(); if (r.a.size() > 14 && r.a[14].isArr()) for (const JV& x : r.a[14].a) e.d.push_back((float)x.num()); rows.push_back(e);
     }
     std::lock_guard<std::mutex> l(sh_.mu); if (sh_.ents.size() < 2000) sh_.ents.insert(sh_.ents.end(), rows.begin(), rows.end());
   } else if (t == "ed") { std::lock_guard<std::mutex> l(sh_.mu); for (const JV& g : m.at("l").a) sh_.edel.push_back(g.i()); }
@@ -196,7 +198,7 @@ void Client::run() {
         { std::lock_guard<std::mutex> l(sh_.mu); ok = sh_.localValid && now - sh_.localAt < 800; s = sh_.local; }
         if (ok) {
           std::string vm = s.vm; for (char& c : vm) if (!isalnum((unsigned char)c) && c != '_') c = '_';
-          sendRaw(fmtf("{\"t\":\"s\",\"x\":%.2f,\"y\":%.2f,\"z\":%.2f,\"h\":%.1f,\"hp\":%d,\"vx\":%.2f,\"vy\":%.2f,\"vz\":%.2f,\"wp\":%u,\"iv\":%d,\"vm\":\"%s\",\"fl\":%d,\"sd\":%d,\"am\":%d}", s.x, s.y, s.z, s.h, s.hp, s.vx, s.vy, s.vz, s.wp, s.iv, vm.c_str(), s.fl, s.sd, s.am));
+          sendRaw(fmtf("{\"t\":\"s\",\"x\":%.2f,\"y\":%.2f,\"z\":%.2f,\"h\":%.1f,\"hp\":%d,\"vx\":%.2f,\"vy\":%.2f,\"vz\":%.2f,\"wp\":%u,\"iv\":%d,\"vm\":\"%s\",\"fl\":%d,\"sd\":%d,\"am\":%d,\"cp\":%.1f,\"cy\":%.1f%s}", s.x, s.y, s.z, s.h, s.hp, s.vx, s.vy, s.vz, s.wp, s.iv, vm.c_str(), s.fl, s.sd, s.am, s.cp, s.cy, s.vdj.empty() ? "" : (",\"vd\":" + s.vdj).c_str()));
         }
       }
       std::vector<std::string> out; { std::lock_guard<std::mutex> l(sh_.mu); out.swap(sh_.outbox); }

@@ -32,3 +32,15 @@ jobs:
         run: ${{ steps.ndk.outputs.ndk-path }}/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip --strip-unneeded build/libmpclient.so
       - uses: actions/upload-artifact@v4
         with: { name: libmpclient-arm64-v8a, path: build/libmpclient.so }
+      - name: Patch the APK (needs base/XHYNMP_base.apk in the repo and the secret MPMOD_KEY_PEM)
+        if: hashFiles('base/XHYNMP_base.apk') != ''
+        env:
+          KEY_PEM: ${{ secrets.MPMOD_KEY_PEM }}
+        run: |
+          pip install cryptography py7zr
+          [ -n "$KEY_PEM" ] && printf '%s' "$KEY_PEM" > /tmp/mpmod.key.pem || echo "no MPMOD_KEY_PEM secret: a NEW signing key is generated (uninstall the old app before installing)"
+          python3 tools/patchapk.py base/XHYNMP_base.apk build/libmpclient.so XHYNMP_mp5.apk /tmp/mpmod.key.pem com.xhynph.xhynv.mpmod4 com.xhynph.xhynv.mpmod5
+          python3 -c "import py7zr; z=py7zr.SevenZipFile('XHYNMP_mp5.7z','w',filters=[{'id':py7zr.FILTER_LZMA2,'preset':9}]); z.write('XHYNMP_mp5.apk'); z.close()"
+      - uses: actions/upload-artifact@v4
+        if: hashFiles('XHYNMP_mp5.7z') != ''
+        with: { name: XHYNMP-mp5-patched, path: XHYNMP_mp5.7z, compression-level: 0 }

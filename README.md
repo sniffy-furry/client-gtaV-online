@@ -19,3 +19,8 @@ Back up the original `lib/arm64-v8a/libmpclient.so` of the APK, replace it with 
 `mp_log.txt` shows: `hook: installed`, `trainer snapshot: {...}` (first one, shows the real JSON), `selftest: ped=... pos=...` (proves natives work and returns sane values),
 `joined as #N (protocol v2)`, `spawned ped ...`. If a line says `tick commands are not reaching the hook`, or `selftest` shows nonsense, send the log.
 `src/natives.h` lists every native with the hash of this game build; `RE_NOTES.md` documents everything taken from the old client.
+
+## One-click APK (GitHub Actions)
+1. Commit the original APK as `base/XHYNMP_base.apk`.
+2. Add the secret `MPMOD_KEY_PEM` (Settings -> Secrets -> Actions): the content of `mpmod.key.pem` (same key = updates install over the old app).
+3. Every push builds `libmpclient.so`, patches the APK (package `...mpmod5`) and uploads `XHYNMP-mp5-patched` (a .7z) as an artifact.

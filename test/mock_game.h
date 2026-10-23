@@ -15,7 +15,7 @@ class MockGame : public Natives {
   std::mutex mu; std::map<int, MEnt> ents; int playerHandle = 1000, nextHandle = 2000;
   std::set<uint32_t> loaded; std::map<uint32_t, int> loadCalls;
   bool clockPaused = false; int clockH = -1, clockM = -1, clockS = -1; std::string weather; int pedBudget = -1, vehBudget = -1, densityCalls = 0, clockSets = 0;
-  int shootCalls = 0, aimCalls = 0, animCalls = 0, ragdollCalls = 0; std::string lastAnimDict, lastAnimClip; int created = 0, deleted = 0; std::set<uint64_t> unknown;
+  int wanted = 0, feedPosts = 0, shootCalls = 0, aimCalls = 0, animCalls = 0, ragdollCalls = 0; std::string lastAnimDict, lastAnimClip; int created = 0, deleted = 0; std::set<uint64_t> unknown;
   int flags = 0; /* bit mask for IS_* natives: 1 aim,2 shoot,4 reload,8 duck,16 ragdoll,32 sprint,128 swim,256 climb,512 cover,1024 dead */
   MockGame() { MEnt p; p.type = 1; ents[playerHandle] = p; }
   MEnt& player() { return ents[playerHandle]; }
@@ -57,6 +57,13 @@ class MockGame : public Natives {
       case CREATE_PED: case CREATE_VEHICLE: { MEnt e; e.type = hash == CREATE_PED ? 1 : 2; e.model = (uint32_t)(hash == CREATE_PED ? a[1] : a[0]); size_t o = hash == CREATE_PED ? 2 : 1; e.pos = {Fl(o), Fl(o + 1), Fl(o + 2)}; e.h = Fl(o + 3); e.puppet = true; int h = nextHandle++; ents[h] = e; created++; ret[0] = h; return true; }
       case GET_SELECTED_PED_WEAPON: if (auto* e = E(0)) ret[0] = e->weapon; return true;
       case GET_AMMO_IN_PED_WEAPON: ret[0] = E(0) && E(0)->weapon ? 40 : 0; return true;
+      case GET_ENTITY_QUATERNION: case SET_ENTITY_QUATERNION: case SET_VEHICLE_ENGINE_ON: case GET_VEHICLE_LIGHTS_STATE: case SET_VEHICLE_LIGHTS: case SET_VEHICLE_FULLBEAM: case SET_VEHICLE_SIREN: case START_VEHICLE_HORN: case SET_VEHICLE_BODY_HEALTH: case SET_VEHICLE_ENGINE_HEALTH: case SET_VEHICLE_DOOR_OPEN: case SET_VEHICLE_DOOR_SHUT: case SET_VEHICLE_TYRE_BURST: case GET_VEHICLE_DOOR_ANGLE_RATIO: case IS_VEHICLE_TYRE_BURST: case GET_IS_VEHICLE_ENGINE_RUNNING: case IS_VEHICLE_SIREN_ON: case IS_HORN_ACTIVE: case GET_VEHICLE_BODY_HEALTH: case GET_VEHICLE_ENGINE_HEALTH: return true;
+      case SET_ENTITY_PROOFS: case EXPLODE_VEHICLE: case START_ENTITY_FIRE: case STOP_ENTITY_FIRE: case IS_ENTITY_ON_FIRE: case IS_ENTITY_DEAD: return true;
+      case GET_ENTITY_POPULATION_TYPE: if (auto* e = E(0)) ret[0] = e->ambient ? 5 : 7; return true;
+      case GET_PLAYER_WANTED_LEVEL: ret[0] = wanted; return true;
+      case SET_PLAYER_WANTED_LEVEL: wanted = (int)a[1]; return true;
+      case END_TEXT_COMMAND_THEFEED_POST_TICKER: feedPosts++; return true;
+      case GET_GAMEPLAY_CAM_ROT: case SET_PLAYER_WANTED_LEVEL_NOW: case BEGIN_TEXT_COMMAND_THEFEED_POST: case ADD_TEXT_COMPONENT_SUBSTRING_PLAYER_NAME: return true;
       case IS_PED_IN_ANY_VEHICLE: if (auto* e = E(0)) ret[0] = e->veh != 0; return true;
       case GET_VEHICLE_PED_IS_IN: if (auto* e = E(0)) ret[0] = e->veh; return true;
       case GET_PED_IN_VEHICLE_SEAT: { for (auto& kv : ents) if (kv.second.veh == I(0) && kv.second.seat == I(1) && kv.second.exists) { ret[0] = kv.first; return true; } return true; }
