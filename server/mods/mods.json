@@ -1,0 +1,4 @@
+{
+  "example_vehicle_pack.zip": { "kind": "addon", "required": false },
+  "example_texture_replace.zip": { "kind": "replace" }
+}
