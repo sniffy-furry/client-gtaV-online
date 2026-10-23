@@ -57,6 +57,7 @@ class MockGame : public Natives {
       case CREATE_PED: case CREATE_VEHICLE: { MEnt e; e.type = hash == CREATE_PED ? 1 : 2; e.model = (uint32_t)(hash == CREATE_PED ? a[1] : a[0]); size_t o = hash == CREATE_PED ? 2 : 1; e.pos = {Fl(o), Fl(o + 1), Fl(o + 2)}; e.h = Fl(o + 3); e.puppet = true; int h = nextHandle++; ents[h] = e; created++; ret[0] = h; return true; }
       case GET_SELECTED_PED_WEAPON: if (auto* e = E(0)) ret[0] = e->weapon; return true;
       case GET_AMMO_IN_PED_WEAPON: ret[0] = E(0) && E(0)->weapon ? 40 : 0; return true;
+      case IS_PED_IN_ANY_VEHICLE: if (auto* e = E(0)) ret[0] = e->veh != 0; return true;
       case GET_VEHICLE_PED_IS_IN: if (auto* e = E(0)) ret[0] = e->veh; return true;
       case GET_PED_IN_VEHICLE_SEAT: { for (auto& kv : ents) if (kv.second.veh == I(0) && kv.second.seat == I(1) && kv.second.exists) { ret[0] = kv.first; return true; } return true; }
       case GET_PLAYER_INDEX: ret[0] = 0; return true;

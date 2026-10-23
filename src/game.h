@@ -62,7 +62,8 @@ class Game {
   // ---- peds
   uint32_t weaponOf(int ped) { return (uint32_t)R(nat::GET_SELECTED_PED_WEAPON, {A(ped)}); }
   int ammoOf(int ped, uint32_t w) { return (int)R(nat::GET_AMMO_IN_PED_WEAPON, {A(ped), A(w)}); }
-  int vehicleOf(int ped) { return (int)R(nat::GET_VEHICLE_PED_IS_IN, {A(ped), A(false)}); }
+  // GET_VEHICLE_PED_IS_IN can keep returning the LAST car after the ped stepped out (the other players then saw the man as a car): require "really inside" first
+  int vehicleOf(int ped) { if (!(R(nat::IS_PED_IN_ANY_VEHICLE, {A(ped), A(false)}) & 1)) return 0; return (int)R(nat::GET_VEHICLE_PED_IS_IN, {A(ped), A(false)}); }
   int seatOf(int ped, int veh) { for (int s = -1; s < 8; s++) if ((int)R(nat::GET_PED_IN_VEHICLE_SEAT, {A(veh), A(s), A(0)}) == ped) return s; return -2; }
   bool flag(uint64_t native, int ped) { return R(native, {A(ped)}) & 1; }
  private:
