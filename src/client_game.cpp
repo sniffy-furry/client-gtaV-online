@@ -36,6 +36,8 @@ void Client::tick(Natives& nat) {
   int me = g.playerPed(); if (!me || !g.exists(me)) return;
   if (!selfTested_) selfTest(g, me);
   applyInbox(now);
+  { bool tp = false; Vec3 tv; { std::lock_guard<std::mutex> l(sh_.mu); tp = sh_.tpNew; sh_.tpNew = false; tv = {sh_.tpx, sh_.tpy, sh_.tpz}; }
+    if (tp) { int mv = g.vehicleOf(me); g.setCoords(mv ? mv : me, tv); logf("teleported to (%.0f,%.0f,%.0f)", tv.x, tv.y, tv.z); } }
   sampleLocal(g, me, now);
   if (!joined_) { if (!remotes_.empty() || !eps_.empty()) dropPuppets(g, false); world_.valid = false; applyWorld(g, now); applyPopulation(g, now); return; }
   applyWorld(g, now); applyPopulation(g, now); applyChat(g); applyWanted(g, now);
@@ -170,7 +172,11 @@ void Client::applyWeapon(Game& g, Remote& r) {
 }
 
 void Client::updatePlayers(Game& g, int me, double now) {
-  (void)me; int spawned = 0; const uint32_t defModel = joaat("a_m_y_hipster_01");
+  int spawned = 0;
+  if (now - lastRemLog_ > 5000) { lastRemLog_ = now; Vec3 mp = g.coords(me);   // what do I know about the other players? (for "I cannot see him")
+    if (remotes_.empty()) logf("remote players: none known yet"); 
+    for (auto& kv : remotes_) { const Remote& r = kv.second; logf("remote #%d %s at (%.0f,%.0f,%.0f) %.0f m from me, ped=%d veh=%d seen=%d", kv.first, r.st.name.c_str(), r.st.x, r.st.y, r.st.z, dist3d(mp, {r.st.x, r.st.y, r.st.z}), r.ped, r.veh, (int)r.seen); } }
+  const uint32_t defModel = joaat("a_m_y_hipster_01");
   for (auto it = remotes_.begin(); it != remotes_.end();) {
     Remote& r = it->second; int id = it->first;
     if (now - r.lastSeen > 3000) { if (r.ped) { ownedByUs_.erase(r.ped); g.del(r.ped); } if (r.veh) { ownedByUs_.erase(r.veh); g.del(r.veh); } logf("puppet for #%d removed", id); it = remotes_.erase(it); continue; }
@@ -424,7 +430,7 @@ void Client::streamEntities(Game& g, int me, double now) {
   if (now - lastStreamLog_ > 5000) { lastStreamLog_ = now; logf("stream: nearby peds %d (sent %d), vehicles %d (sent %d), rows %zu", rawPeds, nPeds, rawVehs, nVehs, rows.size()); }
   std::string cur = "{\"t\":\"e\",\"e\":["; int n = 0;
   auto flush = [&]() { if (n) { cur += "]}"; queueOut(cur); } cur = "{\"t\":\"e\",\"e\":["; n = 0; };
-  for (const std::string& r : rows) { if (cur.size() + r.size() + 2 > 1250 || n >= 60) flush(); cur += (n ? "," : "") + r; n++; }
+  for (const std::string& r : rows) { if (cur.size() + r.size() + 2 > 1000 || n >= 60) flush(); cur += (n ? "," : "") + r; n++; }
   flush();
   // entities that left the scan: tell everyone to remove them
   std::vector<int> gone;

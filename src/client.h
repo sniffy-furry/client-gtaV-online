@@ -75,7 +75,7 @@ class Client {
     std::vector<PState> players; bool playersNew = false;
     std::map<int, App> apps; std::map<int, Loadout> loads; std::vector<AnimEv> anims;
     std::vector<ERow> ents; std::vector<int> edel; std::vector<std::pair<int, int>> owns; std::vector<int> left, take, wlIn; std::vector<std::string> chatIn;
-    bool worldNew = false; int wsec = 0; float wscale = 30; bool wfrozen = false; std::string wweather = "CLEAR"; double wrecv = 0;
+    bool tpNew = false; float tpx = 0, tpy = 0, tpz = 0; bool worldNew = false; int wsec = 0; float wscale = 30; bool wfrozen = false; std::string wweather = "CLEAR"; double wrecv = 0;
     std::vector<std::string> localAnim; // "dict|clip|flags" or "stop"
     // game -> net
     bool localValid = false; double localAt = 0; PState local;
@@ -93,7 +93,7 @@ class Client {
   std::map<int, VdC> vdc_; std::map<int, double> pedDetAt_; std::string localVd_; double lastVdAt_ = 0;
   std::map<int, Remote> remotes_; std::map<int, EPup> eps_;
   std::map<int, int> lidOf_; std::map<int, double> lidSeen_; int nextLid_ = 1;    // host streaming: entity handle -> local id
-  std::set<int> ownedByUs_; std::map<int, double> xferred_; std::vector<int> killLids_; std::set<int> taken_; double lastPurge_ = 0; int appliedWl_ = 0; double wlSetAt_ = 0, lastWlPoll_ = 0; double lastStreamLog_ = 0;                                                       // handles of our own puppets (never stream them)
+  std::set<int> ownedByUs_; std::map<int, double> xferred_; std::vector<int> killLids_; std::set<int> taken_; double lastPurge_ = 0; int appliedWl_ = 0; double wlSetAt_ = 0, lastWlPoll_ = 0, lastRemLog_ = 0; double lastStreamLog_ = 0;                                                       // handles of our own puppets (never stream them)
   struct World { bool valid = false; double sec = 0, recv = 0; float scale = 30; bool frozen = false; std::string weather; } world_;
   double lastClock_ = 0; int lastLocalPed_ = 0; std::string pDict_, pClip_; int pFlags_ = 0; double pSince_ = 0;
   int lastPed_ = 0; bool selfTested_ = false, clockPaused_ = false, popSuppressed_ = false;

@@ -129,6 +129,7 @@ void Client::handle(const std::string& line) {
     if (first) logf("joined as #%d%s", myId_.load(), v2_ ? " (protocol v2)" : "");
   } else if (t == "deny") { logf("join denied: %s", m.at("r").str().c_str()); }
   else if (t == "chat") { logf("[chat] <%s> %s", m.at("n").str().c_str(), m.at("m").str().c_str()); std::lock_guard<std::mutex> l(sh_.mu); if (sh_.chatIn.size() < 20) sh_.chatIn.push_back(m.at("n").str() + ": " + m.at("m").str()); }
+  else if (t == "tp") { std::lock_guard<std::mutex> l(sh_.mu); sh_.tpx = (float)m.at("x").num(); sh_.tpy = (float)m.at("y").num(); sh_.tpz = (float)m.at("z").num(); sh_.tpNew = true; }
   else if (t == "pop") { bool o = m.at("m").i(1) != 0; if (o != popOwn_) logf("population: %s", o ? "I own the area around me (local traffic on, streamed to others)" : "another player owns this area (local traffic off, mirroring)"); popOwn_ = o; }
   else if (t == "wl") { std::lock_guard<std::mutex> l(sh_.mu); sh_.wlIn.push_back(m.at("l").i()); }
   else if (t == "w") {

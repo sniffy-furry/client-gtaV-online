@@ -214,6 +214,13 @@ function onMessage(buf, rinfo0, sock) {
     case 'chat': {
       const text = String(msg.m || '').replace(/[^\x20-\x7E]/g, '').slice(0, 120);
       if (!text) break;
+      if (/^\/tp\b/i.test(text)) { // /tp <name|#id>  : teleport next to another player (anyone may use it)
+        const q = text.slice(3).trim().toLowerCase(); const others = [...players.values()].filter(o => o.id !== p.id && o.st && o.name !== 'Bot');
+        const t = q ? others.find(o => o.name.toLowerCase().startsWith(q.replace(/^#/, '')) || '#' + o.id === q) : (others.length === 1 ? others[0] : null);
+        if (!t) send(p.rinfo, { t: 'chat', n: '*', m: 'usage: /tp <name or #id>  (' + others.map(o => o.name + ' #' + o.id).join(', ') + ')' });
+        else { send(p.rinfo, { t: 'tp', x: t.st.x + 2, y: t.st.y, z: t.st.z + 1 }); log(`${p.name} teleported to ${t.name}`); }
+        break;
+      }
       if (text[0] === '/') { runCommand(text.slice(1), p); break; }
       log(`<${p.name}> ${text}`); broadcast({ t: 'chat', n: p.name, m: text }); break;
     }
@@ -253,7 +260,7 @@ function runCommand(line, who) {
     setWorld({ weather: w }, name);
   } else if (c === 'freeze') { setWorld({ frozen: !world.frozen }, name);
   } else if (c === 'speed') { const s = parseFloat(a[0]); if (!(s >= 0 && s <= 600)) return reply('usage: speed <game seconds per real second, 30 = normal>'); setWorld({ scale: s }, name);
-  } else if (c === 'players') { reply([...players.values()].map(p => `#${p.id} ${p.name} v${p.v}${p.id === hostId ? ' (host)' : ''}`).join(', ') || 'nobody');
+  } else if (c === 'players') { reply([...players.values()].map(p => `#${p.id} ${p.name} v${p.v}${p.id === hostId ? ' (host)' : ''}` + (p.st ? ` at ${p.st.x.toFixed(0)},${p.st.y.toFixed(0)},${p.st.z.toFixed(0)} ${p.pop === 0 ? 'mirrors' : 'owns'} wanted ${p.wl || 0}` : ' (no position yet)') + ` rx s=${p.rx.s} e=${p.rx.e} last ${((Date.now() - p.last) / 1000).toFixed(1)}s ago`).join('\n') || 'nobody');
   } else if (c === 'stats') { reply(`players ${players.size}, entities ${ents.size}`);
   } else if (c === 'bot' && isConsole) { // fake second player for testing alone: "bot start", then "bot car", "bot npcs", "bot report", "bot stop"
     if (a[0] === 'start') {
@@ -320,7 +327,7 @@ setInterval(() => { // entity relay with interest management + expiry
       const r = [e.g, e.k, e.m, +e.x.toFixed(2), +e.y.toFixed(2), +e.z.toFixed(2), +e.h.toFixed(1), +e.vx.toFixed(1), +e.vy.toFixed(1), +e.vz.toFixed(1), e.fl, e.a, e.b, e.ctl];
       if (e.d && (e.k === 2 || now - e.dRx < 700)) r.push(e.d);   // vehicle detail every time; clothes only right after the owner sent them
       const len = JSON.stringify(r).length + 1;
-      if (size + len > 1200) flush();
+      if (size + len > 1000) flush();   // stay below the 1280 B tunnel MTU (Tailscale)
       chunk.push(r); size += len;
     }
     flush();

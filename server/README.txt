@@ -37,3 +37,8 @@ ONE TERMINAL (v9): in the SERVER console type  bot start  (join with the game fi
 
 v10: wanted level is PER PLAYER. A player who shoots and kills a pedestrian/cop/player gets wanted (2, or 3 for a cop); anyone within 10 m of a wanted player becomes wanted too (server.json "wanted": {"radius": 10, "crimes": true}). Far players are not chased.
 Passengers: you can get into somebody's car as passenger (his car or an NPC car); everybody sees you in HIS car, no second car is created. Test alone: bot command  ride  (bot sits in your car) or get into the bot's car (after  car).
+
+v11: in the game chat any player can type  /tp <name or #id>  (or just /tp when there are two players) to teleport next to the other player.
+Server console / host chat:  /players  now shows each player's position, who owns the area, wanted level and packet counters.
+The client log (mp_log.txt) prints every 5 s where it thinks each other player is and how far away.
+Tailscale: packets are kept under 1000 bytes (tunnel MTU 1280).
