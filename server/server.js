@@ -11,6 +11,7 @@ const DEFAULTS = {
   hosts: 'auto', port: 30120, httpPort: 30121, tickHz: 10, maxPlayers: 16, timeoutMs: 10000, requireMods: true, motd: 'GTAV MP', modsDir: 'mods',
   world: { hour: 22, minute: 0, timeScale: 30, frozen: false, weather: 'CLEAR' },   // timeScale: game seconds per real second (30 = GTA default, 2 s per game minute)
   entities: { interestRadius: 300, maxPerPlayer: 150, maxSend: 80, expireMs: 2500, rateHz: 6 },
+  wanted: { radius: 10, crimes: true },   // wanted level is per player; players within radius metres of a wanted player become wanted too; crimes: shooting/killing makes the shooter wanted
   population: 'proximity',   // 'proximity': every player runs the NPC traffic around himself and streams it (a lower-id player nearby owns the area); 'host': only the host runs it
 };
 const user = fs.existsSync(cfgPath) ? JSON.parse(fs.readFileSync(cfgPath, 'utf8')) : {};
@@ -70,7 +71,11 @@ const players = new Map();         // "ip:port" -> player
 const byId = new Map();            // id -> player
 const xferred = new Map();         // gid -> expiry: entities a player took over; late rows from the old controller are ignored
 const ents = new Map();            // gid -> { g,k,m,x,y,z,h,vx,vy,vz,fl,a,b, ctl, last, raw }
-let nextId = 1, hostId = 0, wanted = 0;
+let nextId = 1, hostId = 0;
+const joaat = s => { let h = 0; for (const c of s.toLowerCase()) { h = (h + c.charCodeAt(0)) >>> 0; h = (h + (h << 10)) >>> 0; h = (h ^ (h >>> 6)) >>> 0; } h = (h + (h << 3)) >>> 0; h = (h ^ (h >>> 11)) >>> 0; h = (h + (h << 15)) >>> 0; return h >>> 0; };
+const COPS = new Set(['s_m_y_cop_01', 's_f_y_cop_01', 's_m_y_sheriff_01', 's_f_y_sheriff_01', 's_m_y_hwaycop_01', 's_m_y_swat_01', 's_m_m_snowcop_01', 's_m_y_ranger_01', 's_f_y_ranger_01'].map(joaat));
+function setWanted(p, lvl, why) { if (!p || (p.wl || 0) >= lvl) return; p.wl = lvl; log(`wanted ${lvl} for ${p.name} (${why})`); send(p.rinfo, { t: 'wl', l: lvl, why }); }
+function shooterNear(x, y, maxD, exceptId) { const now = Date.now(); for (const o of players.values()) if (o.id !== exceptId && o.st && now - (o.shotAt || 0) < 2500 && Math.hypot(o.st.x - x, o.st.y - y) < maxD) return o; return null; }
 
 function send(rinfo, obj) {
   const b = Buffer.from(JSON.stringify(obj));
@@ -80,7 +85,7 @@ function send(rinfo, obj) {
 function broadcast(obj, exceptId) { for (const p of players.values()) if (p.id !== exceptId) send(p.rinfo, obj); }
 function broadcastV2(obj, exceptId) { for (const p of players.values()) if (p.v >= 2 && p.id !== exceptId) send(p.rinfo, obj); }
 function cleanName(n) { return String(n || '').replace(/[^A-Za-z0-9 _.-]/g, '').trim().slice(0, 24); }
-function pickHost() { let best = 0; for (const p of players.values()) if (p.v >= 2 && (!best || p.id < best)) best = p.id; return best; }
+function pickHost() { let best = 0; for (const p of players.values()) if (p.v >= 2 && p.name !== 'Bot' && (!best || p.id < best)) best = p.id; return best; }   // the test bot never becomes host
 function announceHost() { const h = pickHost(); if (h !== hostId) { hostId = h; log(`world host: ${h ? '#' + h + ' ' + byId.get(h).name : 'none'}`); broadcastV2({ t: 'host', h }); } }
 
 function onMessage(buf, rinfo0, sock) {
@@ -112,7 +117,7 @@ function onMessage(buf, rinfo0, sock) {
     send(rinfo, okMsg(p));
     broadcast({ t: 'chat', n: '*', m: `${name} joined` }, p.id);
     if (p.v >= 2) {
-      send(rinfo, worldMsg()); if (wanted) send(rinfo, { t: 'wl', l: wanted, i: 0 });
+      send(rinfo, worldMsg());
       for (const o of players.values()) { // late join snapshot: everybody's look and loadout
         if (o.id === p.id || o.v < 2) continue;
         if (o.app) send(rinfo, Object.assign({ t: 'a', i: o.id }, o.app));
@@ -136,11 +141,15 @@ function onMessage(buf, rinfo0, sock) {
         wp: Number.isInteger(msg.wp) && msg.wp >= 0 && msg.wp <= 0xFFFFFFFF ? msg.wp : 0, iv: msg.iv ? 1 : 0,
         vm: typeof msg.vm === 'string' && /^[A-Za-z0-9_]{0,32}$/.test(msg.vm) ? msg.vm : '',
         // v2 extras: fl = bit flags (1 aim, 2 shoot, 4 reload, 8 crouch, 16 ragdoll, 32 sprint, 64 in vehicle, 128 parachute, 256 swim, 512 climb, 1024 cover, 2048 dead), sd = seat, am = ammo in clip
-        vd: Array.isArray(msg.vd) && msg.vd.length === 8 && msg.vd.every(v => typeof v === 'number' && Number.isFinite(v)) ? msg.vd : null,
+        rv: int(msg.rv, 0, 255) ? msg.rv : 0, rg: int(msg.rg, 0, 0x7FFFFFFF) ? msg.rg : 0,
+        vd: Array.isArray(msg.vd) && (msg.vd.length === 8 || msg.vd.length === 10) && msg.vd.every(v => typeof v === 'number' && Number.isFinite(v)) ? msg.vd : null,
         cp: num(msg.cp, -90, 90) ? msg.cp : 0, cy: num(msg.cy, -720, 720) ? msg.cy : 0,
         fl: int(msg.fl, 0, 0xFFFFF) ? msg.fl : 0, sd: int(msg.sd, -2, 16) ? msg.sd : -2, am: int(msg.am, 0, 99999) ? msg.am : 0,
       };
-      { const dead = (p.st.fl & 2048) !== 0; if (dead && !p.dead) { log(`${p.name} died`); broadcast({ t: 'chat', n: '*', m: `${p.name} died` }); } p.dead = dead; }
+      if (p.st.fl & 2) p.shotAt = now;
+      { const dead = (p.st.fl & 2048) !== 0;
+        if (dead && !p.dead) { log(`${p.name} died`); broadcast({ t: 'chat', n: '*', m: `${p.name} died` }); if (cfg.wanted.crimes) setWanted(shooterNear(p.st.x, p.st.y, 80, p.id), 2, `killed ${p.name}`); }
+        p.dead = dead; }
       break;
     }
     case 'a': { // appearance: model (hash or name), c = 12 x [drawable,texture,palette], p = 8 x [index,texture], hb = head blend, ht = hair tints
@@ -177,7 +186,10 @@ function onMessage(buf, rinfo0, sock) {
         if (!e && xferred.has(g) && xferred.get(g) > now) continue;
         if (!e) { if ((g >>> 16) !== p.id || mine >= cfg.entities.maxPerPlayer) continue; e = { g, ctl: p.id }; ents.set(g, e); mine++; }
         else if (e.ctl !== p.id) continue;
-        Object.assign(e, { k, m, x, y, z, h, vx, vy, vz, fl, a, b, last: now }); if (dok) { e.d = d; e.dRx = now; }
+        const wasDead = e.fl !== undefined && (e.fl & 2048) !== 0;
+        Object.assign(e, { k, m, x, y, z, h, vx, vy, vz, fl, a, b, last: now });
+        if (k === 1 && !wasDead && (fl & 2048) && e.last0 && cfg.wanted.crimes) setWanted(shooterNear(x, y, 80, 0), COPS.has(m) ? 3 : 2, COPS.has(m) ? 'killed a cop' : 'killed a pedestrian');
+        e.last0 = true; if (dok) { e.d = d; e.dRx = now; }
       }
       break;
     }
@@ -195,9 +207,9 @@ function onMessage(buf, rinfo0, sock) {
       if (old) send(old.rinfo, { t: 'take', g: e.g });
       broadcastV2({ t: 'ed', l: [e.g] }, p.id); log(`${p.name} #${p.id} took over entity ${e.g} from #${e.ctl}`); break;
     }
-    case 'wl': { // shared wanted level: last change wins, relayed to everyone else
+    case 'wl': { // my own wanted level changed (the server only tracks it; nearby players and crimes are handled in wantedRules)
       if (p.v < 2 || !int(msg.l, 0, 5)) return;
-      wanted = msg.l; log(`wanted level ${wanted} (by ${p.name})`); broadcastV2({ t: 'wl', l: wanted, i: p.id }, p.id); break;
+      p.wl = msg.l; break;
     }
     case 'chat': {
       const text = String(msg.m || '').replace(/[^\x20-\x7E]/g, '').slice(0, 120);
@@ -226,6 +238,7 @@ function drop(key, why) {
 }
 
 // ---------- admin commands (console or host via chat) ----------
+let botProc = null; process.on('exit', () => { if (botProc) botProc.kill(); });
 function runCommand(line, who) {
   const isConsole = !who, name = who ? who.name : 'console';
   const reply = s => { if (who) send(who.rinfo, { t: 'chat', n: '*', m: s.slice(0, 120) }); else console.log(s); };
@@ -242,8 +255,18 @@ function runCommand(line, who) {
   } else if (c === 'speed') { const s = parseFloat(a[0]); if (!(s >= 0 && s <= 600)) return reply('usage: speed <game seconds per real second, 30 = normal>'); setWorld({ scale: s }, name);
   } else if (c === 'players') { reply([...players.values()].map(p => `#${p.id} ${p.name} v${p.v}${p.id === hostId ? ' (host)' : ''}`).join(', ') || 'nobody');
   } else if (c === 'stats') { reply(`players ${players.size}, entities ${ents.size}`);
+  } else if (c === 'bot' && isConsole) { // fake second player for testing alone: "bot start", then "bot car", "bot npcs", "bot report", "bot stop"
+    if (a[0] === 'start') {
+      if (botProc) return reply('bot already running');
+      botProc = require('child_process').spawn(process.execPath, [require('path').join(__dirname, 'test_bot.js'), '127.0.0.1', String(cfg.port), String(cfg.httpPort)], { stdio: ['pipe', 'pipe', 'pipe'] });
+      const pipe = d => String(d).split('\n').filter(Boolean).forEach(l => console.log('[bot] ' + l));
+      botProc.stdout.on('data', pipe); botProc.stderr.on('data', pipe); botProc.on('exit', () => { botProc = null; console.log('[bot] stopped'); });
+      reply('bot started: now type  bot help');
+    } else if (a[0] === 'stop') { if (botProc) botProc.kill(); else reply('bot is not running');
+    } else if (!botProc) reply('bot is not running: type  bot start');
+    else botProc.stdin.write((a[0] === 'help' || !a.length ? 'help' : a.join(' ')) + '\n');
   } else if (c === 'say' && isConsole) { broadcast({ t: 'chat', n: 'server', m: a.join(' ').slice(0, 120) });
-  } else reply('commands: time <h> [m] | weather <NAME> | freeze | speed <x> | players | stats' + (isConsole ? ' | say <text>' : ''));
+  } else reply('commands: time <h> [m] | weather <NAME> | freeze | speed <x> | players | stats' + (isConsole ? ' | say <text> | bot start|stop|<command>' : ''));
 }
 if (process.stdin.isTTY) require('readline').createInterface({ input: process.stdin }).on('line', l => { if (l.trim()) runCommand(l); });
 
@@ -252,7 +275,7 @@ if (process.stdin.isTTY) require('readline').createInterface({ input: process.st
 function popFor(p, all) {
   if (cfg.population === 'host') return p.id === hostId ? 1 : 0;
   const lim = p.pop === 0 ? 450 : 350;
-  for (const o of all) if (o.v >= 2 && o.id < p.id && Math.hypot(o.st.x - p.st.x, o.st.y - p.st.y) < lim) return 0;
+  for (const o of all) if (o.v >= 2 && o.name !== 'Bot' && o.id < p.id && Math.hypot(o.st.x - p.st.x, o.st.y - p.st.y) < lim) return 0;
   return 1;
 }
 setInterval(() => { // players + keepalive timeouts (v1 format, v2 receivers also get extras)
@@ -261,10 +284,11 @@ setInterval(() => { // players + keepalive timeouts (v1 format, v2 receivers als
   const all = [...players.values()].filter(p => p.st);
   for (const p of players.values()) {
     if (p.v >= 2 && p.st) { const m = popFor(p, all); if (m !== p.pop) { p.pop = m; log(`population: #${p.id} ${p.name} ${m ? 'owns' : 'mirrors'} its area`); send(p.rinfo, { t: 'pop', m }); } }
+    if (p.v >= 2 && p.st && (p.wl || 0) < 5) for (const o of all) if (o.id !== p.id && (o.wl || 0) > (p.wl || 0) && Math.hypot(o.st.x - p.st.x, o.st.y - p.st.y) < cfg.wanted.radius) setWanted(p, o.wl, `near wanted ${o.name}`);
     const others = all.filter(o => o.id !== p.id).map(o => {
       const r = { i: o.id, n: o.name, x: +o.st.x.toFixed(2), y: +o.st.y.toFixed(2), z: +o.st.z.toFixed(2), h: +o.st.h.toFixed(1), hp: o.st.hp,
         vx: +o.st.vx.toFixed(2), vy: +o.st.vy.toFixed(2), vz: +o.st.vz.toFixed(2), wp: o.st.wp, iv: o.st.iv, vm: o.st.vm };
-      if (p.v >= 2) { r.fl = o.st.fl; r.sd = o.st.sd; r.am = o.st.am; r.cp = +o.st.cp.toFixed(1); r.cy = +o.st.cy.toFixed(1); if (o.st.vd) r.vd = o.st.vd.map(v => +v.toFixed(4)); }
+      if (p.v >= 2) { r.fl = o.st.fl; r.sd = o.st.sd; r.am = o.st.am; r.cp = +o.st.cp.toFixed(1); r.cy = +o.st.cy.toFixed(1); if (o.st.vd) r.vd = o.st.vd.map(v => +v.toFixed(4)); if (o.st.rv) r.rv = o.st.rv; if (o.st.rg) r.rg = o.st.rg; }
       return r;
     });
     send(p.rinfo, { t: 'w', p: others });

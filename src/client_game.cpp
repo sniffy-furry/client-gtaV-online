@@ -10,6 +10,14 @@ static const float kPi = 3.14159265f;
 static const uint32_t kUnarmed = 0xA2719263u;
 static std::string fmt(const char* f, ...) { char b[1500]; va_list ap; va_start(ap, f); vsnprintf(b, sizeof b, f, ap); va_end(ap); return b; }
 static uint32_t parseHash(const std::string& s) { return (uint32_t)strtoul(s.c_str(), nullptr, 10); }
+// police peds and vehicles: kept (and streamed to others) while I am wanted, even when another player owns the ambient population
+static bool isCopModel(uint32_t m) {
+  static std::set<uint32_t> s;
+  if (s.empty()) for (const char* n : {"s_m_y_cop_01", "s_f_y_cop_01", "s_m_y_sheriff_01", "s_f_y_sheriff_01", "s_m_y_hwaycop_01", "s_m_y_swat_01", "s_m_m_snowcop_01", "s_m_y_ranger_01", "s_f_y_ranger_01", "s_m_m_fibsec_01", "s_m_y_pilot_01",
+    "police", "police2", "police3", "police4", "policeb", "policet", "policeold1", "policeold2", "sheriff", "sheriff2", "fbi", "fbi2", "riot", "pranger", "polmav", "predator", "policeb"}) s.insert(joaat(n));
+  return s.count(m) != 0;
+}
+
 // puppets only show what their owner's game says: no local bullet/fire/explosion/collision damage on them
 static void proofOn(Game& g, int h, bool on) { g.V(nat::SET_ENTITY_PROOFS, {A(h), A(on), A(on), A(on), A(on), A(on), A(on), A(on), A(on)}); }
 
@@ -70,6 +78,11 @@ void Client::sampleLocal(Game& g, int ped, double now) {
   PState s; Vec3 p = g.coords(ped); s.x = p.x; s.y = p.y; s.z = p.z; s.h = g.heading(ped); s.hp = g.health(ped);
   int veh = g.vehicleOf(ped); Vec3 v;
   if (veh && g.exists(veh)) { v = g.velocity(veh); s.vm = std::to_string(g.model(veh)); localSd_ = g.seatOf(ped, veh); } else { veh = 0; v = g.velocity(ped); localSd_ = -2; }
+  if (veh && localSd_ != -1 && localSd_ != -2) {   // passenger: tell the others WHICH car I sit in, so nobody spawns a second one
+    for (const auto& kv : remotes_) if (kv.second.veh == veh) { s.rv = kv.first; break; }
+    if (!s.rv) for (const auto& kv : eps_) if (kv.second.handle == veh) { s.rg = kv.first; break; }
+    if (!s.rv && !s.rg) { auto it = lidOf_.find(veh); if (it != lidOf_.end()) s.rg = (myId_.load() << 16) | it->second; }
+  }
   s.vx = v.x; s.vy = v.y; s.vz = v.z; s.wp = g.weaponOf(ped); s.am = localAm_;
   { Vec3 cr = g.vec(nat::GET_GAMEPLAY_CAM_ROT, {A(2)}); s.cp = cr.x; s.cy = cr.z; }
   if (veh) { if (now - lastVdAt_ >= 100) { lastVdAt_ = now; localVd_ = vehDetail(g, veh, now); } s.vdj = localVd_; } else localVd_.clear();   // where the player looks/aims (pitch, yaw)
@@ -182,6 +195,13 @@ void Client::updatePlayers(Game& g, int me, double now) {
     applyWeapon(g, r);
     if (r.animStop) { g.V(nat::CLEAR_PED_TASKS, {A(r.ped)}); r.animStop = false; }
     if (r.animPending) { g.V(nat::REQUEST_ANIM_DICT, {P(r.animDict.c_str())}); if (g.R(nat::HAS_ANIM_DICT_LOADED, {P(r.animDict.c_str())}) & 1) { g.V(nat::TASK_PLAY_ANIM, {A(r.ped), P(r.animDict.c_str()), P(r.animClip.c_str()), A(8.0f), A(-8.0f), A(-1), A(r.animFlags), A(0.0f), A(false), A(false), A(false)}); r.animPending = false; } else if (now - r.animSince > 4000) r.animPending = false; }
+    if (inVeh && (r.st.rv || r.st.rg)) {   // passenger of another car
+      int tv = vehicleHandleFor(g, me, r.st.rv, r.st.rg);
+      if (r.veh) { ownedByUs_.erase(r.veh); g.del(r.veh); r.veh = 0; }
+      if (tv && g.exists(tv)) { if (g.vehicleOf(r.ped) != tv) g.V(nat::SET_PED_INTO_VEHICLE, {A(r.ped), A(tv), A(r.st.sd < 0 ? 0 : r.st.sd)}); r.riding = tv; }
+      r.vehOutSince = 0; r.lastFl = r.st.fl; continue;
+    }
+    if (r.riding) { if (g.exists(r.riding)) g.V(nat::TASK_LEAVE_VEHICLE, {A(r.ped), A(r.riding), A(16)}); g.V(nat::CLEAR_PED_TASKS_IMMEDIATELY, {A(r.ped)}); g.setCoords(r.ped, pos); r.riding = 0; r.moving = false; }
     // leaving a car: wait 700 ms so a single flickering packet does not delete and respawn the car
     if (!inVeh && r.veh) { if (r.vehOutSince == 0) r.vehOutSince = now; if (now - r.vehOutSince < 700) { r.lastFl = r.st.fl; continue; } } else r.vehOutSince = 0;
     // vehicle puppet
@@ -241,6 +261,7 @@ void Client::purgeAmbient(Game& g, int me, double now) {
       int h = buf[i]; if (h <= 0 || h == me || h == myVeh || ownedByUs_.count(h) || taken_.count(h) || !g.exists(h)) continue;
       if ((int)g.R(nat::GET_ENTITY_TYPE, {A(h)}) != kind) continue;
       if (kind == 1 && (g.flag(nat::IS_PED_A_PLAYER, h) || (myVeh && g.vehicleOf(h) == myVeh))) continue;
+      if (appliedWl_ > 0 && isCopModel(g.model(h))) continue;
       int pt = (int)g.R(nat::GET_ENTITY_POPULATION_TYPE, {A(h)});
       if (pt >= 2 && pt <= 5) { g.del(h); purged++; }   // random parked/patrol/scenario/ambient only: never mission or player-made entities
     }
@@ -260,7 +281,8 @@ std::string Client::vehDetail(Game& g, int h, double now) {
   int on = 0, hb = 0; g.V(nat::GET_VEHICLE_LIGHTS_STATE, {A(h), P(&on), P(&hb)});
   int bits = (int)(g.R(nat::GET_IS_VEHICLE_ENGINE_RUNNING, {A(h)}) & 1) | ((on & 1) ? 2 : 0) | ((hb & 1) ? 4 : 0) | ((g.R(nat::IS_VEHICLE_SIREN_ON, {A(h)}) & 1) ? 8 : 0) | ((g.R(nat::IS_HORN_ACTIVE, {A(h)}) & 1) ? 16 : 0) | ((c.slow & 0xFF) << 8) | (((c.slow >> 8) & 0x3F) << 16);
   int extra = ((g.R(nat::IS_ENTITY_DEAD, {A(h), A(false)}) & 1) ? 1 : 0) | ((g.R(nat::IS_ENTITY_ON_FIRE, {A(h)}) & 1) ? 2 : 0);   // exploded / burning
-  return fmt("[%.4f,%.4f,%.4f,%.4f,%d,%d,%.0f,%.0f]", q[0], q[1], q[2], q[3], extra, bits, F(g.R(nat::GET_VEHICLE_BODY_HEALTH, {A(h)})), F(g.R(nat::GET_VEHICLE_ENGINE_HEALTH, {A(h)})));
+  int pc = 0, sc = 0; g.V(nat::GET_VEHICLE_COLOURS, {A(h), P(&pc), P(&sc)});
+  return fmt("[%.4f,%.4f,%.4f,%.4f,%d,%d,%.0f,%.0f,%d,%d]", q[0], q[1], q[2], q[3], extra, bits, F(g.R(nat::GET_VEHICLE_BODY_HEALTH, {A(h)})), F(g.R(nat::GET_VEHICLE_ENGINE_HEALTH, {A(h)})), pc, sc);
 }
 
 void Client::applyVehDetail(Game& g, int veh, const std::vector<float>& d, int& lastBits) {
@@ -277,7 +299,15 @@ void Client::applyVehDetail(Game& g, int veh, const std::vector<float>& d, int& 
   for (int i = 0; i < 6; i++) if ((bits & (1 << (16 + i))) && !(prev & (1 << (16 + i)))) g.V(nat::SET_VEHICLE_TYRE_BURST, {A(veh), A(i), A(true), A(1000.0f)});
   if (d[6] > 0 && std::fabs(F(g.R(nat::GET_VEHICLE_BODY_HEALTH, {A(veh)})) - d[6]) > 50.0f) g.V(nat::SET_VEHICLE_BODY_HEALTH, {A(veh), A(d[6])});
   if (d[7] > 0 && std::fabs(F(g.R(nat::GET_VEHICLE_ENGINE_HEALTH, {A(veh)})) - d[7]) > 50.0f) g.V(nat::SET_VEHICLE_ENGINE_HEALTH, {A(veh), A(d[7])});
+  if (d.size() >= 10) { int pc = 0, sc = 0; g.V(nat::GET_VEHICLE_COLOURS, {A(veh), P(&pc), P(&sc)}); if (pc != (int)d[8] || sc != (int)d[9]) g.V(nat::SET_VEHICLE_COLOURS, {A(veh), A((int)d[8]), A((int)d[9])}); }
   lastBits = bits;
+}
+
+int Client::vehicleHandleFor(Game& g, int me, int rv, int rg) {
+  if (rv) { if (rv == myId_) return g.vehicleOf(me); auto it = remotes_.find(rv); return it != remotes_.end() ? it->second.veh : 0; }
+  if (rg) { if ((rg >> 16) == myId_) { for (const auto& kv : lidOf_) if (((myId_.load() << 16) | kv.second) == rg) return kv.first; return 0; }
+    auto it = eps_.find(rg); return it != eps_.end() ? it->second.handle : 0; }
+  return 0;
 }
 
 void Client::applyChat(Game& g) {
@@ -302,7 +332,7 @@ void Client::applyWanted(Game& g, double now) {
 void Client::updateEntities(Game& g, int me, double now) {
   int spawned = 0;
   { int mv = g.vehicleOf(me); // I climbed into a mirrored NPC car: I own it from now on
-    if (mv && g.exists(mv)) for (auto it = eps_.begin(); it != eps_.end(); ++it) if (it->second.handle == mv && it->second.row.k == 2) {
+    if (mv && g.exists(mv) && g.seatOf(me, mv) == -1) for (auto it = eps_.begin(); it != eps_.end(); ++it) if (it->second.handle == mv && it->second.row.k == 2) {
       int gid = it->first; queueOut("{\"t\":\"xfer\",\"g\":" + std::to_string(gid) + "}"); xferred_[gid] = now; ownedByUs_.erase(mv); taken_.insert(mv); proofOn(g, mv, false);
       logf("took over car %d (gid %d)", mv, gid); eps_.erase(it); break; } }
   for (auto it = eps_.begin(); it != eps_.end();) {
@@ -360,7 +390,7 @@ void Client::streamEntities(Game& g, int me, double now) {
   if (now - lastStream_ < 1000.0 / entRate_) return; lastStream_ = now;
   std::set<int> seen; std::vector<std::string> rows; int rawPeds = -1, rawVehs = -1, nPeds = 0, nVehs = 0;
   auto lid = [&](int h) { auto it = lidOf_.find(h); if (it == lidOf_.end()) { it = lidOf_.emplace(h, nextLid_).first; nextLid_ = nextLid_ % 65535 + 1; } lidSeen_[h] = now; return (myId_.load() << 16) | it->second; };
-  int myVeh = g.vehicleOf(me);
+  int myVeh0 = g.vehicleOf(me), myVeh = (myVeh0 && g.seatOf(me, myVeh0) == -1) ? myVeh0 : 0;   // as a passenger the car stays in the stream
   if (myVeh) { auto it = lidOf_.find(myVeh); if (it != lidOf_.end()) { queueOut("{\"t\":\"ed\",\"l\":[" + std::to_string((myId_.load() << 16) | it->second) + "]}"); lidSeen_.erase(myVeh); lidOf_.erase(it); } }
   auto emit = [&](int h, int kind) {
       (kind == 1 ? nPeds : nVehs)++; seen.insert(h); Vec3 p = g.coords(h), v = g.velocity(h); int gid = lid(h), fl = 0, a = 0, b = 0;
@@ -376,7 +406,7 @@ void Client::streamEntities(Game& g, int me, double now) {
       } else { int pc = 0, sc = 0; g.V(nat::GET_VEHICLE_COLOURS, {A(h), P(&pc), P(&sc)}); a = (pc & 0xFF) | ((sc & 0xFF) << 8); det = vehDetail(g, h, now); }
       rows.push_back(fmt("[%d,%d,%u,%.2f,%.2f,%.2f,%.1f,%.1f,%.1f,%.1f,%d,%d,%d%s%s]", gid, kind, g.model(h), p.x, p.y, p.z, g.heading(h), v.x, v.y, v.z, fl, a, b, det.empty() ? "" : ",", det.c_str()));
   };
-  auto scan = [&](int kind) {
+  auto scan = [&](int kind, bool copsOnly) {
     int buf[2 * 40 + 2]; memset(buf, 0, sizeof buf); buf[0] = 40;
     int cnt = kind == 1 ? (int)g.R(nat::GET_PED_NEARBY_PEDS, {A(me), P(buf), A(-1)}) : (int)g.R(nat::GET_PED_NEARBY_VEHICLES, {A(me), P(buf)});
     (kind == 1 ? rawPeds : rawVehs) = cnt; if (!g.lastOk()) logf("stream: native for kind %d was rejected", kind);
@@ -384,11 +414,12 @@ void Client::streamEntities(Game& g, int me, double now) {
     for (int i = 1; i <= 2 * cnt + 1; i++) {
       int h = buf[i]; if (h <= 0 || h == me || h == myVeh || ownedByUs_.count(h) || seen.count(h) || !g.exists(h)) continue;
       if ((int)g.R(nat::GET_ENTITY_TYPE, {A(h)}) != kind) continue;
+      if (copsOnly && !isCopModel(g.model(h))) continue;
       if (kind == 1 && g.flag(nat::IS_PED_A_PLAYER, h)) continue;
       emit(h, kind);
     }
   };
-  if (popOwn_) { scan(1); scan(2); }
+  if (popOwn_) { scan(1, false); scan(2, false); } else if (appliedWl_ > 0) { scan(1, true); scan(2, true); }   // wanted but not the area owner: my police still reach the others
   for (auto it = taken_.begin(); it != taken_.end();) { int h = *it; if (!g.exists(h)) { it = taken_.erase(it); continue; } ++it; if (h == myVeh || seen.count(h)) continue; int k = (int)g.R(nat::GET_ENTITY_TYPE, {A(h)}); if (k == 1 || k == 2) emit(h, k); }
   if (now - lastStreamLog_ > 5000) { lastStreamLog_ = now; logf("stream: nearby peds %d (sent %d), vehicles %d (sent %d), rows %zu", rawPeds, nPeds, rawVehs, nVehs, rows.size()); }
   std::string cur = "{\"t\":\"e\",\"e\":["; int n = 0;

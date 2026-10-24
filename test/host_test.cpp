@@ -81,8 +81,10 @@ int main() {
 
   // ---- phase 3b: chat on screen + shared wanted level
   { int f0 = B.feedPosts; writeFile("/tmp/mpA/mp_say.txt", "hello from alice\n"); waitUntil([&] { return B.feedPosts > f0; }, 8.0); CHECK(B.feedPosts > f0, "chat message shown on Bob's screen (feed ticker)"); }
-  A.wanted = 3; waitUntil([&] { return B.wanted == 3; }, 8.0); CHECK(B.wanted == 3, "wanted level of Alice reached Bob");
-  B.wanted = 0; waitUntil([&] { return A.wanted == 0; }, 8.0); CHECK(A.wanted == 0, "Bob clearing it clears it for Alice");
+  A.wanted = 3; sleep_s(2.0); CHECK(B.wanted == 0, "Alice's wanted level does NOT reach Bob when he is far away");
+  { std::lock_guard<std::mutex> l(B.mu); Vec3 ap = A.posOf(A.playerHandle); B.player().pos = {ap.x + 4, ap.y, ap.z}; }
+  waitUntil([&] { return B.wanted == 3; }, 8.0); CHECK(B.wanted == 3, "Bob standing 4 m from wanted Alice becomes wanted too");
+  { std::lock_guard<std::mutex> l(B.mu); B.player().pos = {110, 210, 30}; } A.wanted = 0; B.wanted = 0;
 
   // ---- phase 4: Alice drives
   A.flags = 0; { MEnt& c = A.ents[alicesCar]; std::lock_guard<std::mutex> l(A.mu); c.pos = A.player().pos; c.pos.x += 0.5f; A.player().veh = alicesCar; A.player().seat = -1; c.vel = {10, 0, 0}; A.player().vel = {10, 0, 0}; }

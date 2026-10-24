@@ -21,3 +21,19 @@ It prints "other phones use server=<ip>" for each one: friends on your hotspot u
 v2: shared world. Default start time is 22:00 (night) for everybody; change it in server.json ("world") or live:
   type in the server console, or as the host in chat:  /time 23 30   /weather RAIN   /freeze   /speed 30
 Everyone on the server sees the same time and weather. NPC traffic and cars are mirrored from the host (PROTOCOL.md).
+
+TEST ALONE (v9):  node test_bot.js      (second terminal/Termux session, next to the server)
+Then type in the game chat (mp_say.txt):  !bot help
+  !bot walk | stand | car [model]     bot walks a circle / drives a car around you
+  !bot lights | beam | siren | horn | door | tire | explode | fire     (while !bot car) -> you must SEE it on his car
+  !bot gun | rpg | shoot | shootme | die | revive      weapon, aiming/shooting (shootme = at you), death
+  !bot npcs [off]      bot owns 4 test peds (walker, cop shooting, dead body, ragdoll) and 4 cars (lights+beam, 2 doors open + 2 tyres burst, siren, burning wreck)
+  !bot wanted 3        sets the shared wanted level (your stars must change)
+  !bot report          the bot tells you (feed) what it receives FROM you: your fl bits, weapon, camera, car lights/doors... = checks the SENDING side
+Typing commands: simplest = in the terminal where test_bot.js runs, just type  car  /  lights  /  npcs  /  report ...  (no "!bot" needed).
+In the game chat there is no keyboard: write into the file  /storage/emulated/0/Games/GTAV/mp_say.txt  (or in Termux: sh say.sh "!bot car"); the mod reads and deletes it within a second.
+
+ONE TERMINAL (v9): in the SERVER console type  bot start  (join with the game first), then  bot car / bot lights / bot npcs / bot report / bot help ...  and  bot stop.
+
+v10: wanted level is PER PLAYER. A player who shoots and kills a pedestrian/cop/player gets wanted (2, or 3 for a cop); anyone within 10 m of a wanted player becomes wanted too (server.json "wanted": {"radius": 10, "crimes": true}). Far players are not chased.
+Passengers: you can get into somebody's car as passenger (his car or an NPC car); everybody sees you in HIS car, no second car is created. Test alone: bot command  ride  (bot sits in your car) or get into the bot's car (after  car).

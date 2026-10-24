@@ -51,3 +51,9 @@ Suggested `fl/a/b` meaning: ped `fl` = state bits as above, `a` = health, `b` = 
 - puppets (cars, peds) are proof against local bullets/fire/explosions/collisions; only the owner's state counts. Shots by a puppet are real bullets (aim ray 60 m from `cp`/`cy`), so the victim's own game applies the damage and reports it in `hp`/`fl`.
 - vehicle `d[4]` = 1 exploded, 2 burning: receivers explode / ignite their copy.
 - the server announces `<name> died` in chat when a player's dead flag (2048) rises.
+
+## v10
+- `wl` C->S: my own wanted level changed. S->C `{"t":"wl","l":N,"why":"..."}`: set my wanted level to at least N (crime or standing near a wanted player). No longer shared with everybody.
+- state `s` gets `rv` (player id) or `rg` (npc car gid) when I am a passenger: receivers seat my puppet in THAT car instead of creating one. Relayed in `w` rows.
+- vehicle detail `d`/`vd` may have 10 numbers: ..., primary colour, secondary colour.
+- police peds/vehicles are streamed by a wanted player even if another player owns the ambient population.

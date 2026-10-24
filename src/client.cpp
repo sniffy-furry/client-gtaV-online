@@ -136,7 +136,7 @@ void Client::handle(const std::string& line) {
     for (const JV& p : m.at("p").a) {
       PState s; s.id = p.at("i").i(); s.name = p.at("n").str(); s.x = (float)p.at("x").num(); s.y = (float)p.at("y").num(); s.z = (float)p.at("z").num(); s.h = (float)p.at("h").num();
       s.vx = (float)p.at("vx").num(); s.vy = (float)p.at("vy").num(); s.vz = (float)p.at("vz").num(); s.hp = p.at("hp").i(200); s.wp = p.at("wp").u(); s.iv = p.at("iv").i(); s.vm = p.at("vm").str();
-      s.fl = p.at("fl").i(0); s.sd = p.at("sd").i(-2); s.am = p.at("am").i(0); s.cp = (float)p.at("cp").num(); s.cy = (float)p.at("cy").num(); for (const JV& x : p.at("vd").a) s.vd.push_back((float)x.num()); v.push_back(s);
+      s.fl = p.at("fl").i(0); s.sd = p.at("sd").i(-2); s.am = p.at("am").i(0); s.cp = (float)p.at("cp").num(); s.cy = (float)p.at("cy").num(); for (const JV& x : p.at("vd").a) s.vd.push_back((float)x.num()); s.rv = p.at("rv").i(0); s.rg = p.at("rg").i(0); v.push_back(s);
     }
     std::lock_guard<std::mutex> l(sh_.mu); sh_.players = std::move(v); sh_.playersNew = true;
   } else if (t == "left") { int id = m.at("i").i(); logf("player #%d left", id); std::lock_guard<std::mutex> l(sh_.mu); sh_.left.push_back(id); }
@@ -198,7 +198,7 @@ void Client::run() {
         { std::lock_guard<std::mutex> l(sh_.mu); ok = sh_.localValid && now - sh_.localAt < 800; s = sh_.local; }
         if (ok) {
           std::string vm = s.vm; for (char& c : vm) if (!isalnum((unsigned char)c) && c != '_') c = '_';
-          sendRaw(fmtf("{\"t\":\"s\",\"x\":%.2f,\"y\":%.2f,\"z\":%.2f,\"h\":%.1f,\"hp\":%d,\"vx\":%.2f,\"vy\":%.2f,\"vz\":%.2f,\"wp\":%u,\"iv\":%d,\"vm\":\"%s\",\"fl\":%d,\"sd\":%d,\"am\":%d,\"cp\":%.1f,\"cy\":%.1f%s}", s.x, s.y, s.z, s.h, s.hp, s.vx, s.vy, s.vz, s.wp, s.iv, vm.c_str(), s.fl, s.sd, s.am, s.cp, s.cy, s.vdj.empty() ? "" : (",\"vd\":" + s.vdj).c_str()));
+          sendRaw(fmtf("{\"t\":\"s\",\"x\":%.2f,\"y\":%.2f,\"z\":%.2f,\"h\":%.1f,\"hp\":%d,\"vx\":%.2f,\"vy\":%.2f,\"vz\":%.2f,\"wp\":%u,\"iv\":%d,\"vm\":\"%s\",\"fl\":%d,\"sd\":%d,\"am\":%d,\"cp\":%.1f,\"cy\":%.1f%s}", s.x, s.y, s.z, s.h, s.hp, s.vx, s.vy, s.vz, s.wp, s.iv, vm.c_str(), s.fl, s.sd, s.am, s.cp, s.cy, (std::string(s.vdj.empty() ? "" : ",\"vd\":" + s.vdj) + (s.rv ? ",\"rv\":" + std::to_string(s.rv) : "") + (s.rg ? ",\"rg\":" + std::to_string(s.rg) : "")).c_str()));
         }
       }
       std::vector<std::string> out; { std::lock_guard<std::mutex> l(sh_.mu); out.swap(sh_.outbox); }

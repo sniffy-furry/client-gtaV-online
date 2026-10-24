@@ -26,7 +26,7 @@ struct Env {
   std::function<bool()> tickReady;                           // Android: hook + trainer available
 };
 
-struct PState { int id = 0; std::string name; float x = 0, y = 0, z = 0, h = 0, vx = 0, vy = 0, vz = 0, cp = 0, cy = 0; std::vector<float> vd; std::string vdj; int hp = 200; uint32_t wp = 0; int iv = 0; std::string vm; int fl = 0, sd = -2, am = 0; };
+struct PState { int id = 0; std::string name; float x = 0, y = 0, z = 0, h = 0, vx = 0, vy = 0, vz = 0, cp = 0, cy = 0; std::vector<float> vd; std::string vdj; int rv = 0, rg = 0; int hp = 200; uint32_t wp = 0; int iv = 0; std::string vm; int fl = 0, sd = -2, am = 0; };
 struct App { bool valid = false, dirty = false; uint32_t model = 0; std::vector<int> c, p; };
 struct Loadout { bool valid = false, dirty = false; uint32_t w = 0; int am = 0; };
 struct ERow { int g = 0, k = 1; uint32_t m = 0; float x = 0, y = 0, z = 0, h = 0, vx = 0, vy = 0, vz = 0; int fl = 0, a = 0, b = 0, ctl = 0; std::vector<float> d; };
@@ -86,7 +86,7 @@ class Client {
   struct Remote {
     PState st; double lastSeen = 0, spawnAt = 0, lastTask = 0, lastCoordSet = 0; bool seen = false;
     std::string animDict, animClip; int animFlags = 0; bool animPending = false, animStop = false; double animSince = 0;
-    App app; Loadout load; double vehOutSince = 0; std::vector<float> vdApplied; int vbits = -1; int ped = 0, veh = 0; uint32_t pedModel = 0, vehModel = 0, curWeapon = 0xFFFFFFFFu; int lastFl = 0; bool moving = false, dead = false, crouch = false, appliedApp = false;
+    App app; Loadout load; double vehOutSince = 0; int riding = 0; std::vector<float> vdApplied; int vbits = -1; int ped = 0, veh = 0; uint32_t pedModel = 0, vehModel = 0, curWeapon = 0xFFFFFFFFu; int lastFl = 0; bool moving = false, dead = false, crouch = false, appliedApp = false;
   };
   struct EPup { ERow row; std::vector<float> d; bool dNew = false, dead = false; int vbits = -1, lastFl = 0; uint32_t wep = 0xFFFFFFFFu; double lastSeen = 0, spawnAt = 0, lastTask = 0; int handle = 0; bool moving = false, seated = false; };
   struct VdC { int slow = 0; double at = -1e9; };
@@ -106,6 +106,7 @@ class Client {
   void applyInbox(double now);
   void applyWorld(Game& g, double now);
   void applyChat(Game& g);
+  int vehicleHandleFor(Game& g, int me, int rv, int rg);
   std::string vehDetail(Game& g, int h, double now);
   void applyVehDetail(Game& g, int veh, const std::vector<float>& d, int& lastBits);
   void purgeAmbient(Game& g, int me, double now);
